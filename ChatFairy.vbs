@@ -121,39 +121,39 @@ Function VBSMain
 	g_objPluginMgr.Register New MusicScannerPlugin  ' “Ù¿÷…®√Ë
 	g_objPluginMgr.Register New MusicPlayerPlugin   ' “Ù¿÷ƒ£ Ω
 	g_objPluginMgr.Register New TulingPlugin        ' Õº¡Èª˙∆˜»À
-
+	
 	g_objPluginMgr.UpdateMode = STR_WORKING_MODE_MUSIC
 	
 	Do
-    	WScript.Sleep MAIN_LOOP_DELAY
-    	strNewData = Clipboard_GetData()
-    	blnChange = False 
-    	
-    	If Not objIgnoreList.Contains(strNewData) Then
-    		objIgnoreList.RemoveAt 0
-    		objIgnoreList.Insert 0, strNewData
-    		If g_objPluginMgr.HitMode(strNewData) Then 
+		WScript.Sleep MAIN_LOOP_DELAY
+		strNewData = Clipboard_GetData()
+		blnChange = False 
+		
+		If Not objIgnoreList.Contains(strNewData) Then
+			objIgnoreList.RemoveAt 0
+			objIgnoreList.Insert 0, strNewData
+			If g_objPluginMgr.HitMode(strNewData) Then 
 				g_objPluginMgr.UpdateMode = strNewData
 				g_objEventMgr.PostEvent EVENT_TYPE_MODE_CHANGE, strNewData
 			Else
 				g_objPluginMgr.UpdateKeyw = strNewData
 			End If 
 			blnChange = True 
-    	End If 
-    	
-    	g_objEventMgr.DispatchEvent
-    	
-    	If blnChange Then 
+		End If 
+		
+		g_objEventMgr.DispatchEvent
+		
+		If blnChange Then 
 			g_objPluginMgr.DispatchHandle
 		End If 
 		
-    	g_lngTimestamp = g_lngTimestamp + MAIN_LOOP_DELAY
-    	If g_lngTimestamp Mod TIME_UNIT_S = 0 Then
+		g_lngTimestamp = g_lngTimestamp + MAIN_LOOP_DELAY
+		If g_lngTimestamp Mod TIME_UNIT_S = 0 Then
 			g_objPluginMgr.DispatchTimer
 		End If
-    Loop
-
-    Set objIgnoreList = Nothing 
+	Loop
+	
+	Set objIgnoreList = Nothing 
 End Function 
 
 Class PluginMgr
@@ -1296,27 +1296,27 @@ Function Array_ToList(arrData)
 	Dim objList
 	Dim varItem
 	
-    Set objList = Collections_NewArrayList()
-    For Each varItem In arrData
-        objList.Add varItem
-    Next
-    
-    Set Array_ToList = objList
-    Set objList = Nothing
+	Set objList = Collections_NewArrayList()
+	For Each varItem In arrData
+	    objList.Add varItem
+	Next
+	
+	Set Array_ToList = objList
+	Set objList = Nothing
 End Function
 
 Function Array_ToArray(objList)
 	Dim arrData
-    Dim intBound
-    
-    intBound = objList.Count - 1
-    ReDim Preserve arrData(intBound)
-    
-    For i = 0 To intBound
-        arrData(i) = objList(i)
-    Next
-    
-    Array_ToArray = arrData
+	Dim intBound
+	
+	intBound = objList.Count - 1
+	ReDim Preserve arrData(intBound)
+	
+	For i = 0 To intBound
+	    arrData(i) = objList(i)
+	Next
+	
+	Array_ToArray = arrData
 End Function
 
 Function Collections_NewArrayList()
@@ -1345,8 +1345,8 @@ Function File_LoadFile(strFile, bytBuff)
 		Exit Function 
 	End If 
 	
-    Set objStream = g_objFSO.OpenTextFile(strFile, ForReading)  
-    bytBuff = objStream.ReadAll
+	Set objStream = g_objFSO.OpenTextFile(strFile, ForReading)  
+	bytBuff = objStream.ReadAll
 	File_LoadFile = True
 	objStream.Close
 	
@@ -1419,7 +1419,7 @@ Function HTTP_Tuling(strKey, strInfo, strLoc, strUserId)
 	
 	Set objSC = CreateObject("MSScriptControl.ScriptControl")
 	objSC.Language = "JScript"
-    objSC.AddCode "var ret = " & strResp & ";"
+	objSC.AddCode "var ret = " & strResp & ";"
     
    	Set objDict = Dict_NewDict
    	objDict.Add "code", objSC.Eval("ret.code")
