@@ -44,6 +44,9 @@ Const WMP_PLAY_STATE_READY         = 10
 Const WMP_PLAY_STATE_RECONNECTING  = 11
 Const WMP_PLAY_STATE_LAST          = 12
 
+' Event
+Const EVENT_TYPE_MODE_CHANGE  = 1
+
 ' Tuling 消息分类
 Const TULING_API_CODE_TEXT    = 100000
 Const TULING_API_CODE_LINK    = 200000
@@ -63,6 +66,12 @@ Const STR_WORKING_MODE_COMMAND       = "命令模式"
 Const STR_WORKING_MODE_MUSIC         = "音乐模式"
 Const STR_WORKING_MODE_TULING        = "聊天模式"
 
+' 方法定义
+Const STR_PLUGIN_METHOD_INIT         = "hasPlugin_Init"    ' Initialize
+Const STR_PLUGIN_METHOD_TERM         = "hasPlugin_Term"    ' Terminate
+Const STR_PLUGIN_METHOD_TIMER        = "hasPlugin_Timer"
+Const STR_PLUGIN_METHOD_HANDLE       = "hasPlugin_Handle"
+
 ' 音乐模式
 Const STR_PLUGIN_MUSIC_PLAYER_RANDOM = "随机播放"
 Const STR_PLUGIN_MUSIC_PLAYER_PAUSE  = "暂停播放"
@@ -76,8 +85,9 @@ Dim g_objHtml
 Dim g_objWshShell
 Dim g_objFSO
 Dim g_objDBHelper
+Dim g_objPluginMgr
+Dim g_objEventMgr
 
-Dim g_strMode : g_strMode = STR_WORKING_MODE_TULING
 Dim g_strDBPath
 Dim g_lngTimestamp
 
@@ -85,6 +95,8 @@ Set g_objHtml= CreateObject("htmlfile")
 Set g_objWshShell = CreateObject("WScript.Shell")
 Set g_objFSO = CreateObject("Scripting.FileSystemObject")
 Set g_objDBHelper = New DBHelper
+Set g_objPluginMgr = New PluginMgr
+Set g_objEventMgr = New EventMgr
 
 g_strDBPath = Replace(WScript.ScriptFullName, WScript.ScriptName, "data.db")
 
@@ -94,98 +106,283 @@ Set g_objHtml = Nothing
 Set g_objWshShell = Nothing 
 Set g_objFSO = Nothing 
 Set g_objDBHelper = Nothing
+Set g_objPluginMgr = Nothing
+Set g_objEventMgr = Nothing
 
 Function VBSMain
 	Dim objIgnoreList
-	Dim objList
-	Dim objTemp
 	Dim strNewData
+	Dim blnChange
 	
 	DBUtil_Connect g_objDBHelper, g_strDBPath
+	Set objIgnoreList = Array_ToList(Array(strNewData, ",", "，", "", "？"))
 	
-	Set objIgnoreList = Array_NewList()
-	objIgnoreList.Add strNewData
-	objIgnoreList.Add ","
-	objIgnoreList.Add "，"
-	objIgnoreList.Add ""
-	objIgnoreList.Add "？"
-	
-	Set objList = Array_NewList()
-	objList.Add New CommandPlugin       ' 命令模式
-	objList.Add New MusicScannerPlugin  ' 音乐扫描
-	objList.Add New MusicPlayerPlugin   ' 音乐模式
-	objList.Add New TulingPlugin        ' 图灵机器人
-	
-	For Each objTemp In objList 
-		objTemp.Plugin_Init
-	Next
+	g_objPluginMgr.Register New CommandPlugin       ' 命令模式
+	g_objPluginMgr.Register New MusicScannerPlugin  ' 音乐扫描
+	g_objPluginMgr.Register New MusicPlayerPlugin   ' 音乐模式
+	g_objPluginMgr.Register New TulingPlugin        ' 图灵机器人
+
+	g_objPluginMgr.UpdateMode = STR_WORKING_MODE_MUSIC
 	
 	Do
     	WScript.Sleep MAIN_LOOP_DELAY
-    	g_lngTimestamp = g_lngTimestamp + MAIN_LOOP_DELAY
     	strNewData = Clipboard_GetData()
-    	
-    	If StrComp(strNewData, "退出程序") = 0 Then 
-    		Exit Do 
-    	End If
+    	blnChange = False 
     	
     	If Not objIgnoreList.Contains(strNewData) Then
     		objIgnoreList.RemoveAt 0
     		objIgnoreList.Insert 0, strNewData
-    		DispatchPlugin objList, strNewData
+    		If g_objPluginMgr.HitMode(strNewData) Then 
+				g_objPluginMgr.UpdateMode = strNewData
+				g_objEventMgr.PostEvent EVENT_TYPE_MODE_CHANGE, strNewData
+			Else
+				g_objPluginMgr.UpdateKeyw = strNewData
+			End If 
+			blnChange = True 
     	End If 
     	
+    	g_objEventMgr.DispatchEvent
+    	
+    	If blnChange Then 
+			g_objPluginMgr.DispatchHandle
+		End If 
+		
+    	g_lngTimestamp = g_lngTimestamp + MAIN_LOOP_DELAY
     	If g_lngTimestamp Mod TIME_UNIT_S = 0 Then
-	    	For Each objTemp In objList
-	    		objTemp.Plugin_Timer g_strMode, strNewData
-	    	Next 
+			g_objPluginMgr.DispatchTimer
 		End If
     Loop
 
     Set objIgnoreList = Nothing 
-    Set objList = Nothing
-    Set objTemp = Nothing
 End Function 
 
-Function DispatchPlugin(objList, strKeyw)
-	Dim objTemp
-	Dim objModeKeys
-	Dim blnHitMode
-	Dim blnHitKeys
+Class PluginMgr
+	Public objPluginDict
+	Public strMode
+	Public strKeyw
 	
-	For Each objTemp In objList
-		Set objModeKeys = objTemp.ModeKeys
+	Public Sub Class_Initialize()
+		Set objPluginDict = Dict_NewDict()
+	End Sub 
+	
+	Public Sub Class_Terminate()
+		Set objPluginDict = Nothing
+	End Sub 
+	
+	Public Property Let UpdateMode(strMode)
+		Me.strMode = strMode
+	End Property
+	
+	Public Property Let UpdateKeyw(strKeyw)
+		Me.strKeyw = strKeyw
+	End Property 
+	
+	Public Function Update(strMode, strKeyw)
+		Me.strMode = strMode
+		Me.strKeyw = strKeyw
+	End Function 
+	
+	Public Function HitMode(strText)
+		Dim arrPlugin
+		Dim objPlugin
+		Dim blnHit
 		
-		blnHitMode = objModeKeys.HitMode(strKeyw) 
-		blnHitKeys = objModeKeys.HitKeyw(strKeyw)
+		arrPlugin = objPluginDict.Items
+		For Each objPlugin In arrPlugin
+			blnHit = objPlugin.ModeKeys.HitMode(strText)
+			If blnHit Then
+				Exit For 
+			End If
+		Next 
+		HitMode = blnHit
 		
-		If blnHitMode Then 
-			Debug.WriteLine "模式切换  ，", g_strMode, " -> ", strKeyw
-			g_strMode = strKeyw
+		Set objPlugin = Nothing
+		Erase arrPlugin
+	End Function
+	
+	Public Function Register(objPlugin)
+		Dim strPlugin
+		
+		strPlugin = TypeName(objPlugin)
+		If objPluginDict.Exists(strPlugin) Then 
+			Exit Function 
+		End If 
+		
+		If PropertyExists(objPlugin, STR_PLUGIN_METHOD_INIT) Then 
+			objPlugin.Plugin_Init
 		End If
 		
-		blnHitMode = objModeKeys.HitMode(g_strMode) 
+		objPluginDict.Add strPlugin, objPlugin
+	End Function 
+	
+	Public Function Unregister(strPlugin)
+		Dim objPlugin
 		
-		If blnHitMode And blnHitKeys Then 
-			Debug.WriteLine "关键字命中，", strKeyw
-			objTemp.Plugin_Handle g_strMode, strKeyw
+		If Not objPluginDict.Exists(strPlugin) Then 
+			Exit Function
 		End If 
-	Next
-End Function
+		
+		Set objPlugin = objPluginDict(strPlugin)
+		objPluginDict.Remove objPlugin
+		
+		If PropertyExists(objPlugin, STR_PLUGIN_METHOD_TERM) Then 
+			objPlugin.Plugin_Term
+		End If
+		
+		Set objPlugin = Nothing
+	End Function 
+	
+	Public Function DispatchInit()
+		Dim arrPlugin
+		Dim objPlugin
+		
+		arrPlugin = objPluginDict.Items
+		For Each objPlugin In arrPlugin
+			If PropertyExists(objPlugin, STR_PLUGIN_METHOD_INIT) Then 
+				objPlugin.Plugin_Init
+			End If 
+		Next
+		
+		Set objPlugin = Nothing
+		Erase arrPlugin
+	End Function 
+
+	Public Function DispatchTimer
+		Dim arrPlugin
+		Dim objPlugin
+		
+		arrPlugin = objPluginDict.Items
+		For Each objPlugin In arrPlugin
+    		If PropertyExists(objPlugin, STR_PLUGIN_METHOD_TIMER) Then 
+    			objPlugin.Plugin_Timer strMode, strKeyw
+    		End If 
+	    Next 
+	    
+	    Set objPlugin = Nothing 
+	    Erase arrPlugin
+	End Function 
+	
+	Public Function DispatchHandle
+		Dim arrPlugin
+		Dim objPlugin
+		Dim blnHitMode
+		Dim blnHitKeyw
+		
+		arrPlugin = objPluginDict.Items
+		For Each objPlugin In arrPlugin
+			blnHitMode = objPlugin.ModeKeys.HitMode(strMode)
+			blnHitKeyw = objPlugin.ModeKeys.HitKeyw(strKeyw)
+			If blnHitMode Then 
+				Exit For 
+			End If 
+	    Next 
+	    
+	    If blnHitMode And blnHitKeyw Then 
+	    	Debug.WriteLine "关键字命中，", strKeyw
+			If PropertyExists(objPlugin, STR_PLUGIN_METHOD_HANDLE) Then 
+				objPlugin.Plugin_Handle strMode, strKeyw
+			End If 
+	    End If 
+	    
+	    Set objPlugin = Nothing 
+	    Erase arrPlugin
+	End Function 
+End Class 
+
+Class EventMgr
+	Public objMethodList
+	Public objEventQueue
+	
+	Public Sub Class_Initialize()
+		Set objMethodList = Collections_NewArrayList()
+		Set objEventQueue = Collections_NewQueue()
+	End Sub 
+	
+	Public Sub Class_Terminate()
+		Set objMethodList = Nothing
+		Set objEventQueue = Nothing
+	End Sub 
+	
+	Public Function Register(objSubscriber, strMethod, strType)
+		Dim objMethod
+		
+		Set objMethod = Dict_NewDict()
+		objMethod.Add "object", objSubscriber
+		objMethod.Add "method", strMethod
+		objMethod.Add "type"  , strType
+		objMethodList.Add objMethod
+	End Function 
+	
+	Public Function Unregister(objSubscriber, strMethod, strType)
+		Dim objMethod
+		Dim objDelete
+		Dim varCompMethod
+		Dim varCompType
+		Dim intCount
+		
+		For Each objMethod In objMethodList
+			If objMethod("object") Is objSubscriber Then 
+				intCount = intCount + 1
+			End If 
+			If objMethod("method") = strMethod Or IsNull(strMethod) Then 
+				intCount = intCount + 1
+			End If 
+			If objMethod("type") = strType Or IsNull(strType) Then 
+				intCount = intCount + 1
+			End If 
+			If intCount = 3 Then 
+				Set objDelete = objMethod
+				Exit For 
+			End If 
+		Next 
+		objMethodList.Remove objDelete
+	End Function 
+	
+	Public Function PostEvent(strType, varEvent)
+		Dim objEvent
+		
+		Set objEvent = Dict_NewDict()
+		objEvent.Add "type", strType
+		objEvent.Add "data", varEvent
+		objEventQueue.Enqueue objEvent
+		
+		Set objEvent = Nothing
+	End Function 
+
+	Public Function DispatchEvent
+		Dim objEvent
+		Dim objMethod
+		Dim objDst
+		Dim strFunc
+		
+		While objEventQueue.Count > 0
+			Set objEvent = objEventQueue.Dequeue
+			For Each objMethod In objMethodList
+				If  objMethod("type") = objEvent("type") Then 
+					Set objDst = objMethod("object")
+					strFunc = objMethod("method")
+					Execute "objDst." & strFunc & "(objEvent)"
+				End If 
+			Next 
+		Wend 
+		
+		Set objEvent = Nothing
+		Set objMethod = Nothing 
+		Set objDst = Nothing
+	End Function 
+End Class 
 
 Class CommandPlugin
 	Public strDebugTag
+	Public hasPlugin_Init
+	Public hasPlugin_Handle
 	Public objModeKeys
 	Public objService
 	
 	Private Sub Class_Initialize()
 		strDebugTag = "CommandPlugin："
-		
 		Set objModeKeys = New ModeKeysCls
 		Set objService = New CommandService
-		
-		objModeKeys.RegMode STR_WORKING_MODE_COMMAND
-		objModeKeys.RegKeywAll True
 	End Sub 
 	
 	Private Sub Class_Terminate()
@@ -199,13 +396,15 @@ Class CommandPlugin
 	
 	Public Function Plugin_Init()
 		Debug.WriteLine strDebugTag, "Init"
+		
+		objModeKeys.RegMode STR_WORKING_MODE_COMMAND
+		objModeKeys.RegKeywAll True
 	End Function 
 	
 	Public Function Plugin_Handle(strMode, strKeyw)
 		Dim objCmdList
 		Dim objCmdDict
 		Dim strCmdText
-		
 		Dim strPerformer
 		Dim strPerformArgs
 		Dim strPerformObject
@@ -225,28 +424,31 @@ Class CommandPlugin
 		
 		strCmdText = strPerformer
 		
-		If Len(strPerformArgs) > 0 Then 
-			strCmdText = strCmdText & Space(1)
-			strCmdText = strCmdText & strPerformArgs
-		End If 
-		
 		If Len(strPerformObject) > 0 Then 
 			strCmdText = strCmdText & Space(1)
 			strCmdText = strCmdText & strPerformObject
 		End If 
 		
+		If Len(strPerformArgs) > 0 Then 
+			strCmdText = strCmdText & Space(1)
+			strCmdText = strCmdText & strPerformArgs
+		End If 
+		
 		Debug.WriteLine strDebugTag, "执行 ", strCmdText
 		
-		g_objWshShell.Run strCmdText
-	End Function 
-	
-	Public Function Plugin_Timer(strMode, strKeyw)
-
+		Select Case objCmdDict("category")
+			Case 1
+				g_objWshShell.Run strCmdText
+			Case 2
+				ExecuteGlobal strCmdText
+			Case Else 
+		End Select 
 	End Function 
 End Class 
 
 Class MusicScannerPlugin
 	Public strDebugTag
+	Public hasPlugin_Init
 	Public objModeKeys
 	Public objService
 	Public objDirList
@@ -255,9 +457,7 @@ Class MusicScannerPlugin
 		strDebugTag = "MusicScannerPlugin："
 		Set objModeKeys = New ModeKeysCls
 		Set objService = New MusicService
-		Set objDirList = Array_NewList
-		
-		objDirList.Add STR_PLUGIN_MUSIC_SCANNER_DIR
+		Set objDirList = Collections_NewArrayList
 	End Sub 
 	
 	Private Sub Class_Terminate()
@@ -276,6 +476,7 @@ Class MusicScannerPlugin
 		Dim strID
 		
 		Debug.WriteLine strDebugTag, "Init"
+		objDirList.Add STR_PLUGIN_MUSIC_SCANNER_DIR
 		
 		Set objList = objService.Query()
 		For Each objTemp In objList 
@@ -290,14 +491,6 @@ Class MusicScannerPlugin
 		Set objList = Nothing 
 		Set objTemp = Nothing
 	End Function 
-	
-	Public Function Plugin_Handle(strMode, strKeyw)
-	
-	End Function 
-	
-	Public Function Plugin_Timer(strMode, strKeyw)
-	
-	End Function
 	
 	Public Function RefreshRecord(objRecord)
 		Dim strID
@@ -322,7 +515,7 @@ Class MusicScannerPlugin
 		
 		Set objFolder = g_objFSO.GetFolder(strDir)
 		Set objFiles = objFolder.Files
-		Set objList = Array_NewList()
+		Set objList = Collections_NewArrayList()
 		
 		For Each objFile in objFiles
 			strExt = UCase(g_objFSO.GetExtensionName(objFile.path))
@@ -383,6 +576,9 @@ End Class
 
 Class MusicPlayerPlugin
 	Public strDebugTag
+	Public hasPlugin_Init
+	Public hasPlugin_Timer
+	Public hasPlugin_Handle
 	Public objModeKeys
 	Public objService
 	Public objPlayer
@@ -395,6 +591,35 @@ Class MusicPlayerPlugin
 		Set objService = New MusicService
 		Set objPlayer = CreateObject("WMPlayer.OCX.7")
 		Set objDict = Dict_NewDict()
+	End Sub 
+	
+	Private Sub Class_Terminate()
+		Set objModeKeys = Nothing
+		Set objService = Nothing
+		Set objPlayer = Nothing
+		Set objDict = Nothing 
+	End Sub
+	
+	Public Property Get ModeKeys()
+		Set ModeKeys = objModeKeys
+	End Property 
+	
+	Public Function OnModeChangeEvent(objEvent)
+		Dim strMode
+		
+		Debug.Write strDebugTag, "OnModeChangeEvent, "
+		strMode = objEvent("data")
+		If strMode <> STR_WORKING_MODE_MUSIC Then 
+			Debug.WriteLine "音乐播放停止"
+			objPlayer.Controls.Stop
+		End If 
+	End Function 
+	
+	Public Function Plugin_Init()
+		Dim objList
+		Dim objTemp
+		
+		Debug.WriteLine strDebugTag, "Init"
 		
 		objModeKeys.RegMode STR_WORKING_MODE_MUSIC
 		objModeKeys.RegKeyw STR_PLUGIN_MUSIC_PLAYER_RANDOM
@@ -403,28 +628,13 @@ Class MusicPlayerPlugin
 		objModeKeys.RegKeyw STR_PLUGIN_MUSIC_PLAYER_GO
 		objModeKeys.RegKeyw STR_PLUGIN_MUSIC_PLAYER_NEXT
 		objModeKeys.RegKeyw STR_PLUGIN_MUSIC_PLAYER_PREV
-	End Sub 
-	
-	Private Sub Class_Terminate()
-		Set objModeKeys = Nothing
-		Set objService = Nothing
-		Set objPlayer = Nothing
-	End Sub
-	
-	Public Property Get ModeKeys()
-		Set ModeKeys = objModeKeys
-	End Property 
-	
-	Public Function Plugin_Init()
-		Dim objList
-		Dim objTemp
-		
-		Debug.WriteLine strDebugTag, "Init"
 		
 		Set objList = objService.Query()
 		For Each objTemp In objList 
 			objDict.Add objTemp("id"), objTemp("path")
 		Next 
+		
+		g_objEventMgr.Register Me, "OnModeChangeEvent", EVENT_TYPE_MODE_CHANGE
 	End Function 
 	
 	Public Function Plugin_Handle(strMode, strKeyw)
@@ -522,6 +732,8 @@ End Class
 
 Class TulingPlugin
 	Public strDebugTag
+	Public hasPlugin_Init
+	Public hasPlugin_Handle
 	Public objModeKeys
 	
 	Private Sub Class_Initialize()
@@ -529,8 +741,6 @@ Class TulingPlugin
 		
 		strDebugTag = "TulingPlugin："
 		Set objModeKeys = New ModeKeysCls
-		objModeKeys.RegMode STR_WORKING_MODE_TULING
-		objModeKeys.RegKeywAll True
 	End Sub 
 	
 	Private Sub Class_Terminate()
@@ -543,6 +753,9 @@ Class TulingPlugin
 	
 	Public Function Plugin_Init()
 		Debug.WriteLine strDebugTag, "Init"
+		
+		objModeKeys.RegMode STR_WORKING_MODE_TULING
+		objModeKeys.RegKeywAll True
 	End Function 
 	
 	Public Function Plugin_Handle(strMode, strKeyw)
@@ -572,24 +785,19 @@ Class TulingPlugin
 		Set objDict = Nothing
 		Set objList = Nothing
 	End Function 
-	
-	Public Function Plugin_Timer(strMode, strKeyw)
-
-	End Function 
 End Class 
 
 ' 不要New，方便写新模块时使用
 Class SamplesPlugin
 	Public strDebugTag
+	Public hasPlugin_Init
+	Public hasPlugin_Timer
+	Public hasPlugin_Handle
 	Public objModeKeys
 	
 	Private Sub Class_Initialize()
-		Dim arrKeyw
-		
 		strDebugTag = "SamplesPlugin："
 		Set objModeKeys = New ModeKeysCls
-		objModeKeys.RegMode "例子模式"
-		objModeKeys.RegKeywAll True
 	End Sub 
 	
 	Private Sub Class_Terminate()
@@ -602,6 +810,8 @@ Class SamplesPlugin
 	
 	Public Function Plugin_Init()
 		Debug.WriteLine strDebugTag, "Init"
+		objModeKeys.RegMode "例子模式"
+		objModeKeys.RegKeywAll True
 	End Function 
 	
 	Public Function Plugin_Handle(strMode, strKeyw)
@@ -619,8 +829,8 @@ Class ModeKeysCls
 	Public blnAcceptAll
 	
 	Private Sub Class_Initialize()
-		Set objMode = Array_NewList()
-		Set objKeys = Array_NewList()
+		Set objMode = Collections_NewArrayList()
+		Set objKeys = Collections_NewArrayList()
 		blnAcceptAll = False
 	End Sub 
 	
@@ -877,7 +1087,7 @@ Class DBHelper
 	    Set objRecordSet = CreateObject("ADODB.RECORDSET")
 		objRecordSet.Open objCommand
 		
-		Set objList = Array_NewList()
+		Set objList = Collections_NewArrayList()
 		
 		If Err Then 
 			Debug.WriteLine strDebugTag, "查询操作 ", strSQL, _
@@ -1086,7 +1296,7 @@ Function Array_ToList(arrData)
 	Dim objList
 	Dim varItem
 	
-    Set objList = Array_NewList()
+    Set objList = Collections_NewArrayList()
     For Each varItem In arrData
         objList.Add varItem
     Next
@@ -1109,8 +1319,22 @@ Function Array_ToArray(objList)
     Array_ToArray = arrData
 End Function
 
-Function Array_NewList()
-	Set Array_NewList = CreateObject("System.Collections.ArrayList")
+Function Collections_NewArrayList()
+
+	Set Collections_NewArrayList = CreateObject("System.Collections.ArrayList")
+	
+End Function 
+
+Function Collections_NewQueue()
+
+	Set Collections_NewQueue =  CreateObject("System.Collections.Queue")
+	
+End Function 
+
+Function Collections_NewStack()
+
+	Set Collections_NewStack =  CreateObject("System.Collections.Stack")
+	
 End Function 
 
 Function File_LoadFile(strFile, bytBuff)
@@ -1209,7 +1433,7 @@ Function HTTP_Tuling(strKey, strInfo, strLoc, strUserId)
    	End If 
    	
    	If Not IsEmpty(arrKeys) Then 
-    	Set objList = Array_NewList
+    	Set objList = Collections_NewArrayList
 		intLen = objSC.Eval("ret.list.length")
 		For i = 0 To intLen -1
 			Set objTemp = Dict_NewDict
@@ -1234,11 +1458,25 @@ Function HTTP_Tuling_Ask(strInfo)
 		STR_TULING_API_CONF_LOC, STR_TULING_API_CONF_UID)
 End Function 
 
-Sub SP_VOICE_Speak(strContent)
+Function SP_VOICE_Speak(strContent)
+	On Error Resume Next 
 	Dim objSpVoice
-	
+
 	Set objSpVoice = CreateObject("SAPI.SpVoice") 
+	Set objSpVoice.Voice = objSpVoice.GetVoices("Name=VW Hui").Item(0)
 	objSpVoice.Speak strContent
 	
 	Set objSpVoice = Nothing
-End Sub
+	On Error Goto 0
+End Function
+
+Function PropertyExists(objContext, strName)
+	Dim blnExists
+	
+	On Error Resume Next
+	Eval "objContext." & strName
+	blnExists = Not CBool(Err)
+	On Error Goto 0
+	
+	PropertyExists = blnExists
+End Function
