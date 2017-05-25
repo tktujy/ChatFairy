@@ -87,9 +87,10 @@ Dim g_objFSO
 Dim g_objDBHelper
 Dim g_objPluginMgr
 Dim g_objEventMgr
-
 Dim g_strDBPath
 Dim g_lngTimestamp
+Dim g_intScreenW
+Dim g_intScreenH
 
 Set g_objHtml= CreateObject("htmlfile")
 Set g_objWshShell = CreateObject("WScript.Shell")
@@ -99,6 +100,8 @@ Set g_objPluginMgr = New PluginMgr
 Set g_objEventMgr = New EventMgr
 
 g_strDBPath = Replace(WScript.ScriptFullName, WScript.ScriptName, "data.db")
+g_intScreenW = g_objHtml.parentWindow.screen.width
+g_intScreenH = g_objHtml.parentWindow.screen.height
 
 Call VBSMain()
 
@@ -117,6 +120,8 @@ Function VBSMain
 	DBUtil_Connect g_objDBHelper, g_strDBPath
 	Set objIgnoreList = Array_ToList(Array(strNewData, ",", "，", "", "？"))
 	
+	g_objPluginMgr.Register New RT_DynWrapXPlugin   ' DynWrapX
+	g_objPluginMgr.Register New DrawTextPlugin      ' 展示文本
 	g_objPluginMgr.Register New CommandPlugin       ' 命令模式
 	g_objPluginMgr.Register New MusicScannerPlugin  ' 音乐扫描
 	g_objPluginMgr.Register New MusicPlayerPlugin   ' 音乐模式
@@ -370,6 +375,55 @@ Class EventMgr
 		Set objEvent = Nothing
 		Set objMethod = Nothing 
 		Set objDst = Nothing
+	End Function 
+End Class 
+
+Class RT_DynWrapXPlugin
+	Public strDebugTag
+	Public hasPlugin_Init
+	Public objModeKeys
+	Public objService
+	
+	Private Sub Class_Initialize()
+		strDebugTag = "RT_DynWrapXPlugin："
+		Set objModeKeys = New ModeKeysCls
+		Set objService = New DynWrapXService
+	End Sub 
+	
+	Private Sub Class_Terminate()
+		Set objModeKeys = Nothing
+		Set objService = Nothing
+	End Sub 
+	
+	Public Property Get ModeKeys()
+		Set ModeKeys = objModeKeys
+	End Property 
+	
+	Public Function Plugin_Init()
+		Debug.WriteLine strDebugTag, "Init"
+	End Function 
+End Class 
+
+Class DrawTextPlugin
+	Public strDebugTag
+	Public hasPlugin_Init
+	Public objModeKeys
+	
+	Private Sub Class_Initialize()
+		strDebugTag = "DrawTextPlugin："
+		Set objModeKeys = New ModeKeysCls
+	End Sub 
+	
+	Private Sub Class_Terminate()
+		Set objModeKeys = Nothing
+	End Sub 
+	
+	Public Property Get ModeKeys()
+		Set ModeKeys = objModeKeys
+	End Property 
+	
+	Public Function Plugin_Init()
+		Debug.WriteLine strDebugTag, "Init"
 	End Function 
 End Class 
 
@@ -898,6 +952,99 @@ Class ModeKeysCls
 		HitModeOrKeyw = blnHitMode Or blnHitKeyw
 	End Function 
 End Class 
+
+Class DynWrapXService
+	Public strDebugTag
+
+	Private Sub Class_Initialize()
+		strDebugTag = "DynWrapXService："
+	End Sub 
+	
+	Private Sub Class_Terminate()
+
+	End Sub
+	
+	Public Function QueryByType(intType)
+		Dim strSQL
+		
+		Select Case intType
+			Case 0 ' all
+				strSQL = "select * from dynwrapx where enable=1;"
+			Case 1 ' func
+				strSQL = "select library,badname,ordinal86,ordinal64," 
+			Case 2 ' addr
+				strSQL = "select addr,"
+			Case 3 ' code
+				strSQL = "select code,"
+			Case 4 ' callback
+				strSQL = "select callback,"
+			Case Else 
+				Exit Function
+		End Select 
+
+		If intType <> 0 Then 
+			strSQL = strSQL & "id,method,convention,params,return,enable,type,createTime from dynwrapx where type='" 
+			strSQL = strSQL & intType
+			strSQL = strSQL & "' and enable=1;"
+		End If 
+		
+		Set QueryByType = DBUtil_QueryByNativeSQL(g_objDBHelper, strSQL)
+	End Function
+	
+	Public Function QueryByMethod(strMethod)
+		Dim strSQL
+		
+		strSQL = "select * from dynwrapx "
+		strSQL = strSQL & "where method='"
+		strSQL = strSQL & strKeyword 
+		strSQL = strSQL & "' and enable=1;"
+		
+		Set QueryByType = DBUtil_QueryByNativeSQL(g_objDBHelper, strSQL)
+	End Function 
+	
+	Public Function Insert(objDict)
+		Dim strCols
+		Dim strVals
+		Dim strSQL
+		
+		strCols = DBUtil_GenerateStringByArray(objDict.Keys)
+		strVals = DBUtil_GenerateStringByArray(objDict.Items)
+		
+		strSQL = "insert into dynwrapx ("
+		strSQL = strSQL & strCols 
+		strSQL = strSQL & ") values ("
+		strSQL = strSQL & strVals 
+		strSQL = strSQL & ");"
+		
+		DBUtil_UpdateByNativeSQL g_objDBHelper, strSQL
+	End Function 
+	
+	Public Function UpdateByMethod(strMethod, objDict)
+		Dim strDst
+		Dim strSQL
+		
+		strDst = DBUtil_GenerateStringByDict(objDict)
+		
+		strSQL = "update dynwrapx "
+		strSQL = strSQL & "set "
+		strSQL = strSQL & strDst 
+		strSQL = strSQL & " where method='"
+		strSQL = strSQL & strKeyword
+		strSQL = strSQL & "';"
+		
+		DBUtil_UpdateByNativeSQL g_objDBHelper, strSQL
+	End Function 
+	
+	Public Function DeleteByMethod(strMethod)
+		Dim strSQL
+		
+		strSQL = "delete from dynwrapx where method='"
+		strSQL = strSQL & strKeyword
+		strSQL = strSQL & "';"
+		
+		DBUtil_UpdateByNativeSQL g_objDBHelper, strSQL
+	End Function 
+End Class
 
 Class CommandService
 	Public strDebugTag
