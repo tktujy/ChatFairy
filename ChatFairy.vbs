@@ -1,6 +1,7 @@
 Option Explicit
 
 Const MAIN_LOOP_DELAY = 10
+Const PLATFORM_X64 = False
 
 ' 时间单位
 Const TIME_UNIT_MS    = 1
@@ -19,6 +20,13 @@ Const ForAppending       = 8
 Const TristateUseDefault = -2
 Const TristateTrue       = -1
 Const TristateFalse      = 0
+
+' DynwrapX 
+Const DYNWRAPX_REGISTER_TYPE_ALL       = 0
+Const DYNWRAPX_REGISTER_TYPE_METHOD    = 1
+Const DYNWRAPX_REGISTER_TYPE_ADDR      = 2
+Const DYNWRAPX_REGISTER_TYPE_CODE      = 3
+Const DYNWRAPX_REGISTER_TYPE_CALLBACK  = 4
 
 ' CAPICOM           
 Const CAPICOM_HASH_ALGORITHM_SHA1      = 0
@@ -87,6 +95,8 @@ Dim g_objFSO
 Dim g_objDBHelper
 Dim g_objPluginMgr
 Dim g_objEventMgr
+Dim g_objDynWrapX
+Dim g_objCallbackDict
 Dim g_strDBPath
 Dim g_lngTimestamp
 Dim g_intScreenW
@@ -95,6 +105,8 @@ Dim g_intScreenH
 Set g_objHtml= CreateObject("htmlfile")
 Set g_objWshShell = CreateObject("WScript.Shell")
 Set g_objFSO = CreateObject("Scripting.FileSystemObject")
+Set g_objDynWrapX = CreateObject("DynamicWrapperX")
+Set g_objCallbackDict= Dict_NewDict()
 Set g_objDBHelper = New DBHelper
 Set g_objPluginMgr = New PluginMgr
 Set g_objEventMgr = New EventMgr
@@ -108,6 +120,7 @@ Call VBSMain()
 Set g_objHtml = Nothing
 Set g_objWshShell = Nothing 
 Set g_objFSO = Nothing 
+Set g_objDynWrapX = Nothing
 Set g_objDBHelper = Nothing
 Set g_objPluginMgr = Nothing
 Set g_objEventMgr = Nothing
@@ -120,7 +133,7 @@ Function VBSMain
 	DBUtil_Connect g_objDBHelper, g_strDBPath
 	Set objIgnoreList = Array_ToList(Array(strNewData, ",", "，", "", "？"))
 	
-	g_objPluginMgr.Register New RT_DynWrapXPlugin   ' DynWrapX
+	g_objPluginMgr.Register New DynWrapXPlugin      ' DynWrapX
 	g_objPluginMgr.Register New DrawTextPlugin      ' 展示文本
 	g_objPluginMgr.Register New CommandPlugin       ' 命令模式
 	g_objPluginMgr.Register New MusicScannerPlugin  ' 音乐扫描
@@ -378,14 +391,14 @@ Class EventMgr
 	End Function 
 End Class 
 
-Class RT_DynWrapXPlugin
+Class DynWrapXPlugin
 	Public strDebugTag
 	Public hasPlugin_Init
 	Public objModeKeys
 	Public objService
 	
 	Private Sub Class_Initialize()
-		strDebugTag = "RT_DynWrapXPlugin："
+		strDebugTag = "DynWrapXPlugin："
 		Set objModeKeys = New ModeKeysCls
 		Set objService = New DynWrapXService
 	End Sub 
@@ -400,7 +413,107 @@ Class RT_DynWrapXPlugin
 	End Property 
 	
 	Public Function Plugin_Init()
+		Dim objList
+		Dim objDict
+		Dim strBuffer
+		Dim strMethod
+		Dim strConvention
+		Dim strParams
+		Dim strReturn
+		
 		Debug.WriteLine strDebugTag, "Init"
+		g_objCallbackDict.RemoveAll
+		
+		Set objList = objService.QueryByType(DYNWRAPX_REGISTER_TYPE_METHOD)
+		For Each objDict In objList
+			strBuffer = objDict("library")
+			If Len(objDict("badname")) > 0 Then 
+				strBuffer = strBuffer & ":" & objDict("badname")
+			ElseIf Len(objDict("ordinal")) > 0 Then 
+				strBuffer = strBuffer & ":" & objDict("ordinal")
+			End If 
+			strMethod = objDict("method")
+			strConvention = "f=" & objDict("convention")
+			strParams = "i=" & objDict("params")
+			strReturn = "r=" & objDict("return")
+			Register "Register", strBuffer, strMethod, strConvention, strParams, strReturn
+		Next 
+		
+		Set objList = objService.QueryByType(DYNWRAPX_REGISTER_TYPE_ADDR)
+		For Each objDict In objList
+			strBuffer = objDict("addr")
+			strMethod = objDict("method")
+			strConvention = "f=" & objDict("convention")
+			strParams = "i=" & objDict("params")
+			strReturn = "r=" & objDict("return")
+			Register "RegisterAddr", strBuffer, strMethod, strConvention, strParams, strReturn
+		Next 
+		
+		Set objList = objService.QueryByType(DYNWRAPX_REGISTER_TYPE_CODE)
+		For Each objDict In objList
+			strBuffer = objDict("code")
+			strMethod = objDict("method")
+			strConvention = "f=" & objDict("convention")
+			strParams = "i=" & objDict("params")
+			strReturn = "r=" & objDict("return")
+			Register "RegisterCode", strBuffer, strMethod, strConvention, strParams, strReturn
+		Next 
+		
+		Set objList = objService.QueryByType(DYNWRAPX_REGISTER_TYPE_CALLBACK)
+		For Each objDict In objList
+			strBuffer = objDict("callback")
+			strConvention = "f=" & objDict("convention")
+			strParams = "i=" & objDict("params")
+			strReturn = "r=" & objDict("return")
+			Register "RegisterCallback", strBuffer, "", "f=", strParams, strReturn
+		Next 
+		
+		Set objList = Nothing
+		Set objDict = Nothing
+	End Function 
+	
+	Function Register(strRegister, strLibrary, strMethod, strConvention, strParams, strReturn)
+		Dim strStat
+		Dim ptrFunc
+		
+		strLibrary = """" & strLibrary & """"
+		If strRegister = "RegisterCallback" Then
+			strLibrary = "(GetRef(" & strLibrary & ")"
+		End If 
+		
+		strStat = "g_objDynWrapX." & strRegister & " " & strLibrary & ", "
+		
+		If strMethod <> "" Then 
+			strMethod = """" & strMethod & """"
+			strStat = strStat & strMethod & ", "
+		End If 
+		
+		If strConvention <> "f=" Then 
+			strConvention = """" & strConvention & """"
+			strStat = strStat & strConvention & ", "
+		End If 
+		
+		If strParams <> "i=" Then 
+			strParams = """" & strParams & """"
+			strStat = strStat & strParams & ", "
+		End If 
+		
+		If strReturn <> "r=" Then 
+			strReturn = """" & strReturn & """"
+			strStat = strStat & strReturn & ", "
+		End If 
+		
+		strStat = Left(strStat, Len(strStat)-2)
+
+		If strRegister = "RegisterCallback" Then 
+			strStat = strStat & ")"
+			Debug.WriteLine strDebugTag, strStat
+			ptrFunc = Eval(strStat)
+			g_objCallbackDict.Add strLibrary, ptrFunc
+		Else 
+			Debug.WriteLine strDebugTag, strStat
+			Execute strStat
+		End If 
 	End Function 
 End Class 
 
@@ -971,7 +1084,7 @@ Class DynWrapXService
 			Case 0 ' all
 				strSQL = "select * from dynwrapx where enable=1;"
 			Case 1 ' func
-				strSQL = "select library,badname,ordinal86,ordinal64," 
+				strSQL = "select library,badname,ordinal," 
 			Case 2 ' addr
 				strSQL = "select addr,"
 			Case 3 ' code
@@ -996,10 +1109,10 @@ Class DynWrapXService
 		
 		strSQL = "select * from dynwrapx "
 		strSQL = strSQL & "where method='"
-		strSQL = strSQL & strKeyword 
+		strSQL = strSQL & strMethod 
 		strSQL = strSQL & "' and enable=1;"
 		
-		Set QueryByType = DBUtil_QueryByNativeSQL(g_objDBHelper, strSQL)
+		Set QueryByMethod = DBUtil_QueryByNativeSQL(g_objDBHelper, strSQL)
 	End Function 
 	
 	Public Function Insert(objDict)
@@ -1029,7 +1142,7 @@ Class DynWrapXService
 		strSQL = strSQL & "set "
 		strSQL = strSQL & strDst 
 		strSQL = strSQL & " where method='"
-		strSQL = strSQL & strKeyword
+		strSQL = strSQL & strMethod
 		strSQL = strSQL & "';"
 		
 		DBUtil_UpdateByNativeSQL g_objDBHelper, strSQL
@@ -1039,7 +1152,7 @@ Class DynWrapXService
 		Dim strSQL
 		
 		strSQL = "delete from dynwrapx where method='"
-		strSQL = strSQL & strKeyword
+		strSQL = strSQL & strMethod
 		strSQL = strSQL & "';"
 		
 		DBUtil_UpdateByNativeSQL g_objDBHelper, strSQL
