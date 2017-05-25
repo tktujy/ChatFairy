@@ -148,9 +148,7 @@ Function VBSMain
 		End If 
 		
 		g_lngTimestamp = g_lngTimestamp + MAIN_LOOP_DELAY
-		If g_lngTimestamp Mod TIME_UNIT_S = 0 Then
-			g_objPluginMgr.DispatchTimer
-		End If
+		g_objPluginMgr.DispatchTimer
 	Loop
 	
 	Set objIgnoreList = Nothing 
@@ -336,6 +334,9 @@ Class EventMgr
 			End If 
 		Next 
 		objMethodList.Remove objDelete
+		
+		Set objMethod = Nothing
+		Set objDelete = Nothing
 	End Function 
 	
 	Public Function PostEvent(strType, varEvent)
@@ -658,6 +659,10 @@ Class MusicPlayerPlugin
 	End Function 
 	
 	Public Function Plugin_Timer(strMode, strKeyw)
+		If g_lngTimestamp Mod TIME_UNIT_S <> 0 Then 
+			Exit Function
+		End If
+		
 		If Not objModeKeys.HitMode(strMode) Then 
 			Exit Function
 		End If 
