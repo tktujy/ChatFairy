@@ -520,6 +520,7 @@ End Class
 Class DrawTextPlugin
 	Public strDebugTag
 	Public hasPlugin_Init
+	Public hasPlugin_Timer
 	Public objModeKeys
 	
 	Private Sub Class_Initialize()
@@ -537,6 +538,10 @@ Class DrawTextPlugin
 	
 	Public Function Plugin_Init()
 		Debug.WriteLine strDebugTag, "Init"
+	End Function 
+	
+	Public Function Plugin_Timer(strMode, strKeyw)
+		
 	End Function 
 End Class 
 
