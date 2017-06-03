@@ -28,6 +28,13 @@ Const DYNWRAPX_REGISTER_TYPE_ADDR      = 2
 Const DYNWRAPX_REGISTER_TYPE_CODE      = 3
 Const DYNWRAPX_REGISTER_TYPE_CALLBACK  = 4
 
+' gdi32.dll
+Const GDI32_WHITE_BRUSH  = 0
+Const GDI32_TRANSPARENT  = 1
+Const GDI32_COLOR_RED    = &H0000FF
+Const GDI32_SRCCOPY      = &HCC0020
+Const GDI32_WHITE_PEN    = &H000006
+		
 ' CAPICOM           
 Const CAPICOM_HASH_ALGORITHM_SHA1      = 0
 Const CAPICOM_HASH_ALGORITHM_MD2       = 1
@@ -54,6 +61,7 @@ Const WMP_PLAY_STATE_LAST          = 12
 
 ' Event
 Const EVENT_TYPE_MODE_CHANGE  = 1
+Const EVENT_TYPE_DRAW_TEXT    = 2
 
 ' Tuling 消息分类
 Const TULING_API_CODE_TEXT    = 100000
@@ -124,6 +132,7 @@ Set g_objDynWrapX = Nothing
 Set g_objDBHelper = Nothing
 Set g_objPluginMgr = Nothing
 Set g_objEventMgr = Nothing
+Set g_objCallbackDict = Nothing
 
 Function VBSMain
 	Dim objIgnoreList
@@ -155,7 +164,9 @@ Function VBSMain
 				g_objEventMgr.PostEvent EVENT_TYPE_MODE_CHANGE, strNewData
 			Else
 				g_objPluginMgr.UpdateKeyw = strNewData
-			End If 
+			End If
+			g_objEventMgr.PostEvent EVENT_TYPE_DRAW_TEXT, g_objPluginMgr.strMode _
+				 & "：" & g_objPluginMgr.strKeyw
 			blnChange = True 
 		End If 
 		
@@ -306,10 +317,12 @@ Class PluginMgr
 End Class 
 
 Class EventMgr
+	Public strDebugTag
 	Public objMethodList
 	Public objEventQueue
 	
 	Public Sub Class_Initialize()
+		strDebugTag = "EventMgr："
 		Set objMethodList = Collections_NewArrayList()
 		Set objEventQueue = Collections_NewQueue()
 	End Sub 
@@ -327,6 +340,8 @@ Class EventMgr
 		objMethod.Add "method", strMethod
 		objMethod.Add "type"  , strType
 		objMethodList.Add objMethod
+		
+		Debug.WriteLine strDebugTag, TypeName(objSubscriber), " 注册事件 ",  strMethod, " 类型 ", strType
 	End Function 
 	
 	Public Function Unregister(objSubscriber, strMethod, strType)
@@ -520,28 +535,43 @@ End Class
 Class DrawTextPlugin
 	Public strDebugTag
 	Public hasPlugin_Init
-	Public hasPlugin_Timer
 	Public objModeKeys
+	Public objDrawText
+	Public strText
+	Public strBuff
+	Public intX, intY, intW, intH
+	Public intBuff
+	Public intIndex
 	
 	Private Sub Class_Initialize()
 		strDebugTag = "DrawTextPlugin："
 		Set objModeKeys = New ModeKeysCls
+		Set objDrawText = CreateObject("Tiky.ChatFairy.CFDrawText")
 	End Sub 
 	
 	Private Sub Class_Terminate()
 		Set objModeKeys = Nothing
+		Set objDrawText = Nothing
 	End Sub 
 	
 	Public Property Get ModeKeys()
 		Set ModeKeys = objModeKeys
 	End Property 
 	
-	Public Function Plugin_Init()
-		Debug.WriteLine strDebugTag, "Init"
+	Public Function OnDrawTextEvent(objEvent)
+		Debug.WriteLine strDebugTag, "OnDrawTextEvent, Data, ", objEvent("data")
+		
+		objDrawText.UpdateText(objEvent("data"))
 	End Function 
 	
-	Public Function Plugin_Timer(strMode, strKeyw)
+	Public Function Plugin_Init()
+		Debug.WriteLine strDebugTag, "Init"
 		
+		objDrawText.CreateWindowT g_intScreenW-300, g_intScreenH-100, 300, 20
+		objDrawText.UpdateText ""
+		objDrawText.UpdateTextColor RGB(255, 0, 0)
+		
+		g_objEventMgr.Register Me, "OnDrawTextEvent", EVENT_TYPE_DRAW_TEXT
 	End Function 
 End Class 
 
@@ -805,9 +835,11 @@ Class MusicPlayerPlugin
 		Set objList = objService.Query()
 		For Each objTemp In objList 
 			objDict.Add objTemp("id"), objTemp("path")
-		Next 
+		Next
 		
+		Debug.WriteLine strDebugTag, "读取歌曲完成，共 ", objList.Count, " 首 "
 		g_objEventMgr.Register Me, "OnModeChangeEvent", EVENT_TYPE_MODE_CHANGE
+		g_objEventMgr.PostEvent EVENT_TYPE_DRAW_TEXT, "音乐插件：读取歌曲 " & objList.Count & " 首"
 	End Function 
 	
 	Public Function Plugin_Handle(strMode, strKeyw)
@@ -843,6 +875,8 @@ Class MusicPlayerPlugin
 			Exit Function
 		End If 
 	
+		g_objEventMgr.PostEvent EVENT_TYPE_DRAW_TEXT, strMode & "：" & objPlayer.status
+		
 		If objPlayer.PlayState = WMP_PLAY_STATE_PLAYING Then
 			Exit Function
 		End If
@@ -1732,9 +1766,9 @@ Function SP_VOICE_Speak(strContent)
 	On Error Resume Next 
 	Dim objSpVoice
 
-	Set objSpVoice = CreateObject("SAPI.SpVoice") 
+	Set objSpVoice = CreateObject("SAPI.SpVoice")
 	Set objSpVoice.Voice = objSpVoice.GetVoices("Name=VW Hui").Item(0)
-	objSpVoice.Speak strContent
+	objSpVoice.Speak strContent, 1 Or 2
 	
 	Set objSpVoice = Nothing
 	On Error Goto 0
